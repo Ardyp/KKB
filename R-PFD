@@ -1,0 +1,299 @@
+getwd()
+setwd("C:/Users/APasham/Desktop")
+getwd()
+df <-read.csv("df.csv")
+
+# For Dimensions of the data Frame 
+dim(df)
+
+# Checking the Dimensions of the data frane
+str(df)
+
+#checking the type of data types 
+
+data_types <- function(df) 
+  {
+  res <- lapply(df, class)
+  res_frame <- data.frame(unlist(res))
+  barplot(table(res_frame), main="Data Types", col="steelblue", ylab="Number of Features")
+}
+
+data_types(df)
+
+# checking how the response variable is spreadout 
+
+table(df$Response)
+hist(df$Response)
+
+
+library(magrittr) 
+library(dplyr)
+df %>%select(c(-1))->df
+View(df)
+head(df)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+
+# Removing all the data which have more than 20% data missing, We could change this to any percentage we like 
+
+library(tidyverse)
+df <- df %>% 
+  purrr::discard(~sum(is.na(.x))/length(.x)* 100 >=20)
+
+dim(df)
+
+# More code for handling the missing data 
+
+missing_values_count <- colSums(is.na(df))
+train <- df[,colSums(is.na(df)) >=100] 
+head(train)
+sprintf("Columns in original dataset: %s", ncol(df))
+sprintf("Columns with na's dropped: %s", ncol(train))
+
+#I have used three parameters for the package. The first is the dataset, the second is the number of times the model should run. 
+#I have used the default value of 1 here. This means that I now have 1 imputed datasets.
+#Every dataset was created after a maximum of 20 iterations which is indicated by “maxit” parameter.
+
+#Account for the process that created the missing data
+#Preserve the relations in the data 
+#Preserve the uncertainty in relationships 
+#pmm - predective mean matching
+
+
+library(mice)
+mice_imputes = mice(df, m=1, maxit = 20)
+mice_imputes$method
+Imputed_data=complete(mice_imputes,1)
+View(Imputed_data)
+
+# I just saved the data after imputing to save time next time
+write.csv(Imputed_data,"C:/Users/APasham/Desktop/Imputed_data.csv", row.names = FALSE)
+
+train <-read.csv("Imputed_data.csv")
+
+str(Imputed_data, list.len=ncol(Imputed_data))
+
+#Finding out the important features 
+
+library(caret)
+set.seed(100)
+rPartMod <- train(Response ~ ., data=Imputed_data, method="rpart")
+rpartImp <- varImp(rPartMod,)
+print(rpartImp)
+
+# Below are three different alogorithms that can be used to find the correlation but very time consuming 
+# I have used two of them considered most important features based on the correlation.
+
+
+"xgb.plot.importance(Imp_Var, rel_to_first = TRUE, xlab = "Relative importance")
+
+  library(Boruta)
+boruta_output <- Boruta(Response ~ ., data=na.omit(Imputed_data), doTrace=0)  
+names(boruta_output)"
+
+
+"library(caret)
+ctrl <- rfeControl(functions = rfFuncs,
+                   method = "repeatedcv",
+                   repeats = 5,
+                   verbose = FALSE)
+
+lmProfile <- rfe(x=Imputed_data, y=Imputed_data$Response, rfeControl = ctrl)
+
+lmProfile"
+"
+# Considering only correlated variables 
+
+library(dplyr)
+train <- Imputed_data %>%
+  select("Medical_History_23", "Medical_Keyword_3", "Medical_Keyword_15", "BMI", "Wt", "Medical_History_4", "Ins_Age",	"Product_Info_4", "Response" )
+View(train)
+
+
+
+# Checking if there are any more missing values still
+
+missing_values_count <- colSums(is.na(Imputed_data))
+train <- df[,colSums(is.na(Imputed_data)) >=100] 
+head(train)
+sprintf("Columns in original dataset: %s", ncol(Imputed_data))
+sprintf("Columns with na's dropped: %s", ncol(train))
+
+target <- Imputed_data$Response
+View(target)
+
+
+# Prediction modeling 
+
+library(caret)
+intrain <- createDataPartition(y = train$Response, p = 0.65, list = FALSE)
+training <- train[intrain,]
+testing <- train[-intrain,]
+
+dim(training)
+dim(testing)
+
+
+library(rpart)
+set.seed(12345)
+# Training with classification tree
+
+
+modfit.rpart <- rpart(Response ~ ., data=training, method="class")
+print(modfit.rpart)
+summary(modfit.rpart)
+
+
+predictions1 <- predict(modfit.rpart, testing, type = "class",na.action = na.pass)
+
+View(predictions1)
+
+
+library(caret)
+confusionMatrix(table(predictions1, testing$Response))
+
+Accuracy Score: 49%
+
+# Trying the XGBOOST ALGORITHM 
+
+train <-read.csv("Imputed_data.csv")
+
+library(dplyr)
+train <- Imputed_data %>%
+  select("Medical_History_23", "Medical_Keyword_3", "Medical_Keyword_15", "BMI", "Medical_History_4", "Ins_Age",	"Product_Info_4", "Response" )
+View(train)
+
+
+str(train)
+
+Response <- train$Response
+label <- as.integer(train$Response)-1
+train$Response <- NULL
+
+label
+
+
+n = nrow(train)
+
+View(train)
+train.index = sample(n,floor(0.75*n))
+train.data = as.matrix(train[train.index,])
+train.label = label[train.index]
+test.data = as.matrix(train[-train.index,])
+test.label = label[-train.index]
+
+View(test.label)
+
+
+library(xgboost)
+# Transform the two data sets into xgb.Matrix
+xgb.train = xgb.DMatrix(data=train.data,label=train.label)
+xgb.test = xgb.DMatrix(data=test.data,label=test.label)
+
+
+num_class = length(unique(Response))
+num_class
+params = list(
+  booster="gbtree",
+  eta=0.001,
+  max_depth=5,
+  gamma=3,
+  subsample=0.75,
+  colsample_bytree=1,
+  objective="multi:softprob",
+  eval_metric="mlogloss",
+  num_class=8
+)
+
+xgb.fit <-xgb.train(
+  params=params,
+  data=xgb.train,
+  nrounds=10000,
+  nthreads=1,
+  early_stopping_rounds=10,
+  watchlist=list(val1=xgb.train,val2=xgb.test),
+  verbose=0
+)
+
+xgb.fit
+options(max.print=100000)
+
+
+ Imp_Var <- xgb.importance(model = xgb.fit)
+ View(Imp_Var)
+ 
+ xgb.plot.importance(Imp_Var, rel_to_first = TRUE, xlab = "Relative importance")
+ 
+ TOPIMPVAR <- Imp_Var[Imp_Var$Gain > 0.03]
+ 
+ View(TOPIMPVAR)
+ 
+e <- data.frame(xgb.fit$evaluation_log)
+plot(e$iter, e$val1_mlogloss, col = 'blue')
+lines(e$iter,e$val2_mlogloss,col = 'red')
+
+xgb.pred = predict(xgb.fit,test.data, reshape = T)
+xgb.pred = as.data.frame(xgb.pred)
+colnames(xgb.pred) = levels(Response)
+
+View(xgb.pred)
+
+prediction <- data.frame(xgb.pred) %>%
+  mutate(max_prob = max.col(., ties.method = "last"), label=test.label+1)
+
+View(prediction)
+
+confusionMatrix(table(factor(prediction$max_prob), factor(prediction$label)),mode = "everything")
+
+
+library(caret)
+confusionMatrix(table(factor(prediction$max_prob, levels=min(prediction$label):max(prediction$label)), 
+      factor(prediction$label, levels=min(prediction$label):max(prediction$label))))
+      
+      
+Accuracy Score: 51%
+
+## Trying KNN algorithm
+
+
+train <-read.csv("Imputed_data.csv")
+
+library(dplyr)
+train <- Imputed_data %>%
+  select("Medical_History_23", "Medical_Keyword_3", "Medical_Keyword_15", "BMI", "Wt", "Medical_History_4", "Ins_Age",	"Product_Info_4", "Response" )
+View(train)
+
+
+library(caret)
+intrain <- createDataPartition(y = train$Response, p = 0.65, list = FALSE)
+training <- train[intrain,]
+testing <- train[-intrain,]
+
+dim(training)
+dim(testing)
+
+
+
+trctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3, classProbs=TRUE)
+set.seed(3333)
+knn_fit <- train(Response ~., data = training, method = "knn",
+                 trControl=trctrl,tuneLength = 10)
+
+knn_fit
+
+label = as.integer(testing$Response)
+testing$Response <- NULL
+
+test_pred <- predict(knn_fit, newdata = testing)
+
+test_pred
+label
+
+
+confusionMatrix(table(label, round(test_pred)))
+
+
+Accuracy Score is 0.2. Very Less
+
